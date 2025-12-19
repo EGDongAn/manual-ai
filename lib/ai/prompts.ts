@@ -111,7 +111,14 @@ recommendation 값:
 }
 
 // AI 채팅 시스템 프롬프트
-export function getChatSystemPrompt(manuals: Manual[]): string {
+export function getChatSystemPrompt(
+  manuals: Manual[],
+  categories?: Category[],
+  clinicContext?: {
+    name: string;
+    departments: { name: string; treatments: string[] }[];
+  }
+): string {
   const manualsContext = manuals
     .map((m, i) => `
 ### 매뉴얼 ${i + 1}: ${m.title}
@@ -121,13 +128,31 @@ ${m.content.slice(0, 2000)}
 ---`)
     .join('\n');
 
-  return `당신은 병원 업무 매뉴얼에 기반한 AI 어시스턴트입니다.
+  const categoryContext = categories && categories.length > 0
+    ? categories.map(c => {
+        const parent = c.parentName ? ` (상위: ${c.parentName})` : '';
+        return `- ${c.name}${parent}${c.description ? `: ${c.description}` : ''}`;
+      }).join('\n')
+    : '';
+
+  const clinicDepartments = clinicContext?.departments
+    ? clinicContext.departments.map(d => `- ${d.name}: ${d.treatments.join(', ')}`).join('\n')
+    : '';
+
+  return `당신은 ${clinicContext?.name || '병원'} 업무 매뉴얼에 기반한 AI 어시스턴트입니다.
 
 역할:
 1. 사용자의 질문에 정확하게 답변
 2. 매뉴얼 작성 보조 (구조화, 교정, 개선 제안)
 3. 관련 매뉴얼 연결 및 참조
+4. 새 매뉴얼 작성 시 적절한 카테고리 추천
 
+${categoryContext ? `[현재 설정된 업무 카테고리]
+${categoryContext}
+` : ''}
+${clinicDepartments ? `[진료 분야]
+${clinicDepartments}
+` : ''}
 [참고 매뉴얼]
 ${manualsContext || '(참고할 매뉴얼이 없습니다)'}
 
@@ -136,6 +161,8 @@ ${manualsContext || '(참고할 매뉴얼이 없습니다)'}
 - 매뉴얼에 없는 내용은 추측하지 말고 솔직히 알려주세요
 - 답변의 근거가 되는 매뉴얼이 있다면 참조를 명시하세요
 - 병원 업무에 맞는 전문적이고 명확한 문체를 사용하세요
+- 사용자가 "카테고리" 또는 "파트"에 대해 물으면 위 카테고리 목록을 안내하세요
+- 사용자가 매뉴얼 작성을 요청하면 위 카테고리 중 적절한 것을 선택하여 구조화된 매뉴얼을 작성하세요
 - 마크다운 형식으로 응답하세요`;
 }
 

@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { getModel } from '@/lib/ai/gemini';
 import { getChatSystemPrompt, getWritingAssistPrompt } from '@/lib/ai/prompts';
 import { searchManualsForQA } from '@/lib/ai/vector-search';
+import { clinicInfo } from '@/lib/clinic-info';
 import type { ChatMessage } from '@/lib/ai/types';
 
 // POST /api/ai/chat - AI 채팅 (스트리밍)
@@ -36,6 +37,16 @@ export async function POST(request: NextRequest) {
 
     // 기존 메시지 히스토리
     const messages = (session.messages as unknown as ChatMessage[]) || [];
+
+    // 카테고리 목록 조회
+    const categories = await prisma.manual_categories.findMany({
+      include: {
+        parent: {
+          select: { name: true },
+        },
+      },
+      orderBy: { order: 'asc' },
+    });
 
     // 관련 매뉴얼 검색
     let relevantManuals: {
@@ -71,7 +82,17 @@ export async function POST(request: NextRequest) {
           content: m.content,
           summary: m.summary,
           categoryName: m.categoryName,
-        }))
+        })),
+        categories.map(c => ({
+          id: c.id,
+          name: c.name,
+          description: c.description,
+          parentName: c.parent?.name || null,
+        })),
+        {
+          name: clinicInfo.name,
+          departments: clinicInfo.departments,
+        }
       );
     }
 
