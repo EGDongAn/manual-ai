@@ -174,8 +174,9 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('채팅 실패:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json(
-      { error: 'AI 채팅에 실패했습니다.' },
+      { error: 'AI 채팅에 실패했습니다.', details: errorMessage },
       { status: 500 }
     );
   }
