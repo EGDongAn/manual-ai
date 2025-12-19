@@ -10,8 +10,8 @@ const navItems = [
   { href: '/', label: '대시보드' },
   { href: '/manuals', label: '매뉴얼' },
   { href: '/categories', label: '카테고리' },
-  { href: '/tags', label: '태그' },
-  { href: '/settings', label: '설정' },
+  { href: '/ai/chat', label: 'AI 채팅' },
+  { href: '/ai/search', label: 'AI 검색' },
 ]
 
 export function Navbar() {

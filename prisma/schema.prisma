@@ -334,22 +334,23 @@ model manual_categories {
 
 // 매뉴얼
 model manuals {
-  id          Int                @id @default(autoincrement())
+  id          Int                  @id @default(autoincrement())
   title       String
-  content     String             @db.Text
-  summary     String?            @db.Text
+  content     String               @db.Text
+  summary     String?              @db.Text
   category_id Int?
-  category    manual_categories? @relation(fields: [category_id], references: [id])
+  category    manual_categories?   @relation(fields: [category_id], references: [id])
   tags        manual_tags[]
   versions    manual_versions[]
   attachments manual_attachments[]
-  status      ManualStatus       @default(DRAFT)
-  version     Int                @default(1)
-  view_count  Int                @default(0)
+  embedding   manual_embeddings?
+  status      ManualStatus         @default(DRAFT)
+  version     Int                  @default(1)
+  view_count  Int                  @default(0)
   created_by  String?
   updated_by  String?
-  created_at  DateTime           @default(now())
-  updated_at  DateTime           @updatedAt
+  created_at  DateTime             @default(now())
+  updated_at  DateTime             @updatedAt
 
   @@index([category_id])
   @@index([status])
@@ -395,4 +396,25 @@ model manual_attachments {
   created_at DateTime @default(now())
 
   @@index([manual_id])
+}
+
+// 매뉴얼 임베딩 (벡터 검색용)
+model manual_embeddings {
+  id           Int      @id @default(autoincrement())
+  manual_id    Int      @unique
+  manual       manuals  @relation(fields: [manual_id], references: [id], onDelete: Cascade)
+  embedding    Bytes    // Float32 배열 직렬화
+  content_hash String   // 변경 감지용
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+}
+
+// AI 채팅 세션
+model ai_chat_sessions {
+  id         Int      @id @default(autoincrement())
+  title      String?
+  messages   Json     // [{role, content, timestamp}]
+  context    Json?    // 참조된 매뉴얼 ID들
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 }
