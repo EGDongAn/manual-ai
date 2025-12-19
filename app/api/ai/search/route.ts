@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { generateJSON } from '@/lib/ai/gemini';
 import { getSearchQAPrompt } from '@/lib/ai/prompts';
 import { searchManualsForQA } from '@/lib/ai/vector-search';
+import { getNoResultSuggestionPrompt, clinicInfo } from '@/lib/clinic-info';
 import type { SearchResult } from '@/lib/ai/types';
 
 // POST /api/ai/search - 시맨틱 검색 + Q&A
@@ -21,12 +22,39 @@ export async function POST(request: NextRequest) {
     const relevantManuals = await searchManualsForQA(query, limit);
 
     if (relevantManuals.length === 0) {
-      return NextResponse.json({
-        answer: '관련된 매뉴얼을 찾을 수 없습니다. 다른 검색어로 시도해보세요.',
-        sources: [],
-        confidence: 0,
-        followUpQuestions: [],
-      });
+      // AI 제안 생성
+      try {
+        const suggestionPrompt = getNoResultSuggestionPrompt(query);
+        const suggestion = await generateJSON<{
+          suggestion: string;
+          relatedServices: string[];
+          alternativeQueries: string[];
+          contactRecommended: boolean;
+        }>(suggestionPrompt);
+
+        return NextResponse.json({
+          answer: suggestion.suggestion,
+          sources: [],
+          confidence: 0,
+          followUpQuestions: suggestion.alternativeQueries,
+          aiSuggestion: {
+            relatedServices: suggestion.relatedServices,
+            contactRecommended: suggestion.contactRecommended,
+            clinicPhone: clinicInfo.phone,
+            clinicWebsite: clinicInfo.website,
+          },
+          noManualFound: true,
+        });
+      } catch {
+        // AI 제안 실패 시 기본 응답
+        return NextResponse.json({
+          answer: `관련된 매뉴얼을 찾을 수 없습니다.\n\n**이지동안의원 문의**\n- 전화: ${clinicInfo.phone}\n- 홈페이지: ${clinicInfo.website}`,
+          sources: [],
+          confidence: 0,
+          followUpQuestions: ['진료시간', '시그니처 시술', '예약 방법'],
+          noManualFound: true,
+        });
+      }
     }
 
     // 2. AI에게 Q&A 요청

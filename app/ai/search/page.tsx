@@ -7,7 +7,14 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { LoadingSpinner } from '@/components/common/loading-spinner';
-import { Search, FileText, Lightbulb, HelpCircle } from 'lucide-react';
+import { Search, FileText, Lightbulb, HelpCircle, Phone, ExternalLink, Sparkles } from 'lucide-react';
+
+interface AISuggestion {
+  relatedServices: string[];
+  contactRecommended: boolean;
+  clinicPhone: string;
+  clinicWebsite: string;
+}
 
 interface SearchSource {
   manualId: number;
@@ -22,6 +29,8 @@ interface SearchResult {
   sources: SearchSource[];
   confidence: number;
   followUpQuestions: string[];
+  aiSuggestion?: AISuggestion;
+  noManualFound?: boolean;
 }
 
 export default function AISearchPage() {
@@ -116,23 +125,29 @@ export default function AISearchPage() {
       {result && (
         <div className="space-y-6">
           {/* 답변 */}
-          <Card>
+          <Card className={result.noManualFound ? 'border-amber-200 bg-amber-50' : ''}>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Lightbulb className="h-5 w-5 text-yellow-500" />
-                AI 답변
-                <Badge
-                  variant={
-                    result.confidence >= 0.8
-                      ? 'default'
-                      : result.confidence >= 0.5
-                      ? 'secondary'
-                      : 'outline'
-                  }
-                  className="ml-2"
-                >
-                  신뢰도 {Math.round(result.confidence * 100)}%
-                </Badge>
+                {result.noManualFound ? (
+                  <Sparkles className="h-5 w-5 text-amber-500" />
+                ) : (
+                  <Lightbulb className="h-5 w-5 text-yellow-500" />
+                )}
+                {result.noManualFound ? 'AI 제안' : 'AI 답변'}
+                {!result.noManualFound && (
+                  <Badge
+                    variant={
+                      result.confidence >= 0.8
+                        ? 'default'
+                        : result.confidence >= 0.5
+                        ? 'secondary'
+                        : 'outline'
+                    }
+                    className="ml-2"
+                  >
+                    신뢰도 {Math.round(result.confidence * 100)}%
+                  </Badge>
+                )}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -143,6 +158,48 @@ export default function AISearchPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* AI 제안 - 매뉴얼 없을 때 */}
+          {result.noManualFound && result.aiSuggestion && (
+            <Card className="border-blue-200 bg-blue-50">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-blue-900">
+                  <Phone className="h-5 w-5" />
+                  문의 안내
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {result.aiSuggestion.relatedServices.length > 0 && (
+                  <div>
+                    <p className="text-sm font-medium text-blue-900 mb-2">관련 서비스:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {result.aiSuggestion.relatedServices.map((service, idx) => (
+                        <Badge key={idx} variant="secondary">
+                          {service}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {result.aiSuggestion.contactRecommended && (
+                  <div className="flex flex-wrap gap-3 pt-2">
+                    <a href={`tel:${result.aiSuggestion.clinicPhone}`}>
+                      <Button variant="default" size="sm">
+                        <Phone className="h-4 w-4 mr-2" />
+                        {result.aiSuggestion.clinicPhone}
+                      </Button>
+                    </a>
+                    <a href={result.aiSuggestion.clinicWebsite} target="_blank" rel="noopener noreferrer">
+                      <Button variant="outline" size="sm">
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        홈페이지 방문
+                      </Button>
+                    </a>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* 참조 매뉴얼 */}
           {result.sources.length > 0 && (
