@@ -1,0 +1,91 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// 매뉴얼 카테고리
+model Category {
+  id          Int       @id @default(autoincrement())
+  name        String
+  description String?
+  parentId    Int?
+  parent      Category? @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryHierarchy")
+  manuals     Manual[]
+  order       Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+// 매뉴얼
+model Manual {
+  id          Int       @id @default(autoincrement())
+  title       String
+  content     String    @db.Text
+  summary     String?   @db.Text
+  categoryId  Int?
+  category    Category? @relation(fields: [categoryId], references: [id])
+  tags        Tag[]
+  versions    ManualVersion[]
+  attachments Attachment[]
+  status      ManualStatus @default(DRAFT)
+  version     Int       @default(1)
+  viewCount   Int       @default(0)
+  createdBy   String?
+  updatedBy   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([categoryId])
+  @@index([status])
+}
+
+enum ManualStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+// 매뉴얼 버전 히스토리
+model ManualVersion {
+  id        Int      @id @default(autoincrement())
+  manualId  Int
+  manual    Manual   @relation(fields: [manualId], references: [id], onDelete: Cascade)
+  title     String
+  content   String   @db.Text
+  version   Int
+  changedBy String?
+  changeNote String?
+  createdAt DateTime @default(now())
+
+  @@index([manualId])
+}
+
+// 태그
+model Tag {
+  id      Int      @id @default(autoincrement())
+  name    String   @unique
+  manuals Manual[]
+}
+
+// 첨부파일
+model Attachment {
+  id        Int      @id @default(autoincrement())
+  manualId  Int
+  manual    Manual   @relation(fields: [manualId], references: [id], onDelete: Cascade)
+  fileName  String
+  fileUrl   String
+  fileSize  Int?
+  mimeType  String?
+  createdAt DateTime @default(now())
+
+  @@index([manualId])
+}
