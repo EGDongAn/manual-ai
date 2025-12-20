@@ -173,6 +173,7 @@ model items {
   loan_items                                         loan_items[]
   partner_item_mappings                              partner_item_mappings[]
   stock_transactions                                 stock_transactions[]
+  procedure_items                                    procedure_items[]
 }
 
 model loan_items {
@@ -345,6 +346,7 @@ model manuals {
   attachments manual_attachments[]
   embedding   manual_embeddings?
   chunks      manual_chunks[]
+  procedure_links procedure_manuals[]
   status      ManualStatus         @default(DRAFT)
   version     Int                  @default(1)
   view_count  Int                  @default(0)
@@ -441,4 +443,280 @@ model ai_chat_sessions {
   context    Json?    // 참조된 매뉴얼 ID들
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
+}
+
+// ============================================
+// 비즈니스 인텔리전스 시스템 (Business Intelligence)
+// ============================================
+
+// 시술/서비스 정의
+model procedures {
+  id                Int                    @id @default(autoincrement())
+  name              String                 // 시술명 (예: 울쎄라)
+  name_en           String?                // 영문명
+  category          String                 // 카테고리 (안티에이징, 쁘띠성형 등)
+  subcategory       String?                // 세부 카테고리
+  description       String?                @db.Text
+
+  // 시간 관련
+  duration_minutes  Int                    // 기본 소요시간 (분)
+  buffer_minutes    Int                    @default(10)  // 시술 간 버퍼 시간
+
+  // 원가 구성
+  base_cost         Decimal                @db.Decimal(12, 2)  // 기본 원가
+
+  // 상태
+  is_active         Boolean                @default(true)
+  requires_doctor   Boolean                @default(true)  // 의사 필수 여부
+
+  // 연관 관계
+  cost_components   procedure_costs[]
+  required_items    procedure_items[]
+  required_equipment procedure_equipment[]
+  manual_links      procedure_manuals[]
+  influencer_supports influencer_procedure_supports[]
+
+  created_at        DateTime               @default(now())
+  updated_at        DateTime               @updatedAt
+
+  @@index([category])
+  @@index([is_active])
+}
+
+// 시술 원가 구성요소
+model procedure_costs {
+  id              Int        @id @default(autoincrement())
+  procedure_id    Int
+  procedure       procedures @relation(fields: [procedure_id], references: [id], onDelete: Cascade)
+
+  cost_type       CostType   // LABOR, RENT, MATERIAL, EQUIPMENT, OTHER
+  name            String     // 비용 항목명
+  amount          Decimal    @db.Decimal(12, 2)
+  unit            String?    // 단위 (시간당, 회당 등)
+  calculation     String?    // 계산 방식 설명
+
+  created_at      DateTime   @default(now())
+  updated_at      DateTime   @updatedAt
+
+  @@index([procedure_id])
+}
+
+enum CostType {
+  LABOR       // 인건비 (의사, 간호사, 어시스턴트)
+  RENT        // 임대비 (시간당 룸 비용)
+  MATERIAL    // 재료비 (일회용품, 약품 등)
+  EQUIPMENT   // 장비비 (감가상각)
+  OTHER       // 기타
+}
+
+// 시술에 필요한 재료 (items 테이블과 연결)
+model procedure_items {
+  id            Int        @id @default(autoincrement())
+  procedure_id  Int
+  procedure     procedures @relation(fields: [procedure_id], references: [id], onDelete: Cascade)
+  item_id       Int
+  item          items      @relation(fields: [item_id], references: [id])
+
+  quantity      Decimal    @db.Decimal(10, 4)  // 사용량
+  unit          String     // 단위
+  is_optional   Boolean    @default(false)
+
+  @@unique([procedure_id, item_id])
+}
+
+// 시술에 필요한 장비
+model procedure_equipment {
+  id            Int        @id @default(autoincrement())
+  procedure_id  Int
+  procedure     procedures @relation(fields: [procedure_id], references: [id], onDelete: Cascade)
+
+  equipment_name String    // 장비명
+  usage_minutes  Int?      // 사용 시간
+
+  @@index([procedure_id])
+}
+
+// 시술-매뉴얼 연결
+model procedure_manuals {
+  id            Int        @id @default(autoincrement())
+  procedure_id  Int
+  procedure     procedures @relation(fields: [procedure_id], references: [id], onDelete: Cascade)
+  manual_id     Int
+  manual        manuals    @relation(fields: [manual_id], references: [id], onDelete: Cascade)
+
+  relation_type String     // GUIDE, PROTOCOL, FAQ, AFTERCARE 등
+
+  @@unique([procedure_id, manual_id])
+}
+
+// 인플루언서 기본 정보
+model influencers {
+  id                Int                      @id @default(autoincrement())
+  name              String
+  nickname          String?                  // SNS 활동명
+  email             String?
+  phone             String?
+
+  // 소셜 미디어
+  instagram_handle  String?
+  youtube_channel   String?
+  tiktok_handle     String?
+  blog_url          String?
+
+  // AI 분석 결과
+  current_tier      InfluencerTier           @default(C)
+  tier_score        Decimal?                 @db.Decimal(5, 2)  // 0-100점
+  last_analyzed_at  DateTime?
+
+  // 협업 히스토리
+  total_visits      Int                      @default(0)
+  total_supported   Decimal                  @default(0) @db.Decimal(12, 2)
+
+  // 메모
+  notes             String?                  @db.Text
+
+  // 상태
+  is_active         Boolean                  @default(true)
+  is_blacklisted    Boolean                  @default(false)
+  blacklist_reason  String?
+
+  // 연관
+  analyses          influencer_analyses[]
+  supports          influencer_procedure_supports[]
+  visits            influencer_visits[]
+
+  created_at        DateTime                 @default(now())
+  updated_at        DateTime                 @updatedAt
+
+  @@index([current_tier])
+  @@index([is_active])
+}
+
+enum InfluencerTier {
+  SS    // 최상위 (100만+ 팔로워, 높은 영향력)
+  S     // 상위 (50만-100만)
+  A     // 중상위 (10만-50만)
+  B     // 중위 (1만-10만)
+  C     // 마이크로 (1만 미만)
+}
+
+// AI 분석 히스토리
+model influencer_analyses {
+  id              Int          @id @default(autoincrement())
+  influencer_id   Int
+  influencer      influencers  @relation(fields: [influencer_id], references: [id], onDelete: Cascade)
+
+  // SNS 메트릭
+  instagram_followers   Int?
+  instagram_engagement  Decimal?   @db.Decimal(5, 2)  // 참여율 %
+  youtube_subscribers   Int?
+  youtube_avg_views     Int?
+  tiktok_followers      Int?
+  tiktok_engagement     Decimal?   @db.Decimal(5, 2)
+
+  // AI 분석 결과
+  calculated_tier       InfluencerTier
+  tier_score            Decimal    @db.Decimal(5, 2)
+
+  // 분석 상세
+  analysis_summary      String?    @db.Text           // AI가 생성한 요약
+  analysis_raw          Json?                          // 전체 분석 데이터
+
+  // 권장 지원 범위
+  recommended_support_min Decimal? @db.Decimal(12, 2)
+  recommended_support_max Decimal? @db.Decimal(12, 2)
+
+  analyzed_at           DateTime   @default(now())
+
+  @@index([influencer_id])
+  @@index([analyzed_at])
+}
+
+// 인플루언서 시술 지원 기록
+model influencer_procedure_supports {
+  id              Int          @id @default(autoincrement())
+  influencer_id   Int
+  influencer      influencers  @relation(fields: [influencer_id], references: [id], onDelete: Cascade)
+  procedure_id    Int
+  procedure       procedures   @relation(fields: [procedure_id], references: [id])
+  visit_id        Int?
+  visit           influencer_visits? @relation(fields: [visit_id], references: [id])
+
+  // 비용 정보
+  procedure_cost  Decimal      @db.Decimal(12, 2)  // 시술 원가
+  supported_amount Decimal     @db.Decimal(12, 2)  // 지원 금액
+  client_payment  Decimal      @db.Decimal(12, 2)  // 본인 부담금
+
+  // 상태
+  status          SupportStatus @default(SCHEDULED)
+
+  scheduled_at    DateTime?
+  completed_at    DateTime?
+
+  notes           String?
+
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+
+  @@index([influencer_id])
+  @@index([procedure_id])
+  @@index([status])
+}
+
+enum SupportStatus {
+  SCHEDULED   // 예정
+  COMPLETED   // 완료
+  CANCELLED   // 취소
+  NO_SHOW     // 노쇼
+}
+
+// 인플루언서 방문 기록
+model influencer_visits {
+  id              Int          @id @default(autoincrement())
+  influencer_id   Int
+  influencer      influencers  @relation(fields: [influencer_id], references: [id], onDelete: Cascade)
+
+  visit_date      DateTime
+  purpose         String?      // 방문 목적
+
+  // 결과
+  content_posted  Boolean      @default(false)  // 콘텐츠 게시 여부
+  content_urls    Json?        // 게시된 콘텐츠 URL들
+
+  // 지원 시술들
+  supports        influencer_procedure_supports[]
+
+  notes           String?
+
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+
+  @@index([influencer_id])
+  @@index([visit_date])
+}
+
+// 등급별 지원 정책
+model tier_support_policies {
+  id              Int            @id @default(autoincrement())
+  tier            InfluencerTier @unique
+
+  // 지원 한도
+  max_support_per_visit   Decimal   @db.Decimal(12, 2)  // 방문당 최대 지원액
+  max_support_per_month   Decimal   @db.Decimal(12, 2)  // 월 최대 지원액
+  max_visits_per_month    Int       @default(1)          // 월 최대 방문 횟수
+
+  // 지원율
+  support_rate_percent    Int       // 시술 원가 대비 지원율 (%)
+
+  // 지원 가능 시술 카테고리
+  allowed_categories      Json?     // ["안티에이징", "스킨부스터"]
+  excluded_procedures     Json?     // 제외 시술 ID 목록
+
+  // 추가 혜택
+  additional_benefits     Json?     // 기타 혜택 정보
+
+  is_active               Boolean   @default(true)
+
+  created_at              DateTime  @default(now())
+  updated_at              DateTime  @updatedAt
 }
