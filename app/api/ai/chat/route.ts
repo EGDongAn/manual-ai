@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getModel } from '@/lib/ai/gemini';
-import { getChatSystemPrompt, getWritingAssistPrompt } from '@/lib/ai/prompts';
-import { searchManualsForQA } from '@/lib/ai/vector-search';
+import { getGroundedChatSystemPrompt, getWritingAssistPrompt } from '@/lib/ai/prompts';
+import { hybridSearch } from '@/lib/ai/hybrid-search';
 import { clinicInfo } from '@/lib/clinic-info';
 import type { ChatMessage } from '@/lib/ai/types';
 
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
       orderBy: { order: 'asc' },
     });
 
-    // 관련 매뉴얼 검색
+    // 관련 매뉴얼 검색 (Hybrid Search 사용)
     let relevantManuals: {
       id: number;
       title: string;
@@ -61,12 +61,44 @@ export async function POST(request: NextRequest) {
       // 매뉴얼 작성 모드: 컨텍스트 사용
       relevantManuals = [];
     } else {
-      // Q&A 모드: 관련 매뉴얼 검색
-      const searchResults = await searchManualsForQA(message, 5);
-      relevantManuals = searchResults;
+      // Q&A 모드: Hybrid 검색 (벡터 + 키워드)
+      try {
+        const searchResults = await hybridSearch(message, 8);
+
+        // 청크를 매뉴얼 형식으로 변환 (중복 매뉴얼 제거)
+        const manualMap = new Map<number, {
+          id: number;
+          title: string;
+          content: string;
+          summary: string | null;
+          categoryName: string | null;
+        }>();
+
+        for (const chunk of searchResults) {
+          if (!manualMap.has(chunk.manualId)) {
+            manualMap.set(chunk.manualId, {
+              id: chunk.manualId,
+              title: chunk.manualTitle,
+              content: chunk.content,
+              summary: null,
+              categoryName: null,
+            });
+          } else {
+            // 같은 매뉴얼의 청크 내용 추가
+            const existing = manualMap.get(chunk.manualId)!;
+            existing.content += '\n\n' + chunk.content;
+          }
+        }
+
+        relevantManuals = Array.from(manualMap.values()).slice(0, 5);
+      } catch (searchError) {
+        console.error('Hybrid 검색 실패, 기본 검색으로 폴백:', searchError);
+        // 검색 실패 시 빈 배열 사용
+        relevantManuals = [];
+      }
     }
 
-    // 시스템 프롬프트 생성
+    // 시스템 프롬프트 생성 (할루시네이션 방지 강화)
     let systemPrompt: string;
     if (mode === 'writing') {
       systemPrompt = getWritingAssistPrompt(
@@ -75,7 +107,8 @@ export async function POST(request: NextRequest) {
         message
       );
     } else {
-      systemPrompt = getChatSystemPrompt(
+      // Grounded 프롬프트 사용 (할루시네이션 방지 강화)
+      systemPrompt = getGroundedChatSystemPrompt(
         relevantManuals.map(m => ({
           id: m.id,
           title: m.title,

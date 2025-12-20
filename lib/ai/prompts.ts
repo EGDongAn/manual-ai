@@ -227,6 +227,138 @@ JSON 형식으로 응답:
 }`;
 }
 
+// Chain-of-Thought 강화 검색 Q&A 프롬프트
+export function getEnhancedSearchQAPrompt(question: string, manuals: Manual[]): string {
+  const manualsContext = manuals
+    .map((m, i) => `
+### 매뉴얼 ${i + 1}: ${m.title}
+카테고리: ${m.categoryName || '미분류'}
+내용:
+${m.content}
+---`)
+    .join('\n');
+
+  return `당신은 병원 업무 매뉴얼에 기반한 전문 Q&A 어시스턴트입니다.
+
+[관련 매뉴얼]
+${manualsContext || '(관련 매뉴얼이 없습니다)'}
+
+[사용자 질문]
+${question}
+
+다음 단계별 사고 과정을 거쳐 답변하세요:
+
+**1단계: 질문 이해**
+- 사용자가 무엇을 알고 싶어하는지 명확히 파악
+- 질문의 핵심 키워드와 의도 파악
+
+**2단계: 매뉴얼 분석**
+- 제공된 각 매뉴얼의 관련성 평가
+- 질문에 대한 답변을 제공할 수 있는 부분 식별
+
+**3단계: 정보 종합**
+- 여러 매뉴얼의 정보를 논리적으로 결합
+- 모순되는 정보가 있다면 명확히 지적
+
+**4단계: 답변 구성**
+- 근거 있는 명확한 답변 작성
+- 매뉴얼에 없는 내용은 절대 추측하지 않음
+
+**중요: 할루시네이션 방지 규칙**
+- 제공된 매뉴얼에 명시된 내용만 사용
+- 추측이나 외부 지식 사용 금지
+- 불확실한 경우 "매뉴얼에 관련 정보가 없습니다"라고 명시
+- 매뉴얼의 원문을 왜곡하지 않음
+
+JSON 형식으로 응답:
+{
+  "reasoning": {
+    "questionAnalysis": "질문 분석 결과",
+    "relevantManuals": ["관련 있는 매뉴얼 번호 및 이유"],
+    "synthesisApproach": "정보 종합 방법"
+  },
+  "answer": "답변 내용 (마크다운 형식)",
+  "sources": [
+    {"manualId": 1, "title": "매뉴얼 제목", "relevance": "이 매뉴얼의 어느 부분을 참조했는지"}
+  ],
+  "confidence": 0.95,
+  "limitations": "답변의 한계나 주의사항 (있는 경우)",
+  "followUpQuestions": ["관련 후속 질문 1", "관련 후속 질문 2"]
+}`;
+}
+
+// 할루시네이션 방지 채팅 시스템 프롬프트
+export function getGroundedChatSystemPrompt(
+  manuals: Manual[],
+  categories?: Category[],
+  clinicContext?: {
+    name: string;
+    departments: { name: string; treatments: string[] }[];
+  }
+): string {
+  const manualsContext = manuals
+    .map((m, i) => `
+### 매뉴얼 ${i + 1}: ${m.title}
+카테고리: ${m.categoryName || '미분류'}
+내용:
+${m.content.slice(0, 2000)}
+---`)
+    .join('\n');
+
+  const categoryContext = categories && categories.length > 0
+    ? categories.map(c => {
+        const parent = c.parentName ? ` (상위: ${c.parentName})` : '';
+        return `- ${c.name}${parent}${c.description ? `: ${c.description}` : ''}`;
+      }).join('\n')
+    : '';
+
+  const clinicDepartments = clinicContext?.departments
+    ? clinicContext.departments.map(d => `- ${d.name}: ${d.treatments.join(', ')}`).join('\n')
+    : '';
+
+  return `당신은 ${clinicContext?.name || '병원'} 업무 매뉴얼에 기반한 AI 어시스턴트입니다.
+
+**핵심 원칙: 사실 기반 답변 (Grounded Responses)**
+
+역할:
+1. 사용자의 질문에 정확하게 답변
+2. 매뉴얼 작성 보조 (구조화, 교정, 개선 제안)
+3. 관련 매뉴얼 연결 및 참조
+4. 새 매뉴얼 작성 시 적절한 카테고리 추천
+
+**할루시네이션 방지 규칙:**
+1. ✅ 제공된 매뉴얼에 명시된 정보만 사용
+2. ✅ 불확실한 경우 솔직히 "매뉴얼에 관련 정보가 없습니다" 표시
+3. ✅ 답변의 근거가 되는 매뉴얼을 명확히 인용
+4. ❌ 매뉴얼에 없는 내용을 추측하거나 지어내지 않음
+5. ❌ 외부 지식이나 일반 상식으로 답변하지 않음
+6. ❌ 매뉴얼 내용을 왜곡하거나 과장하지 않음
+
+**답변 검증 체크리스트:**
+- [ ] 답변의 모든 주장이 매뉴얼에 근거하는가?
+- [ ] 출처를 명확히 밝혔는가?
+- [ ] 추측이나 가정을 사실처럼 말하지 않았는가?
+- [ ] 불확실한 부분을 솔직히 인정했는가?
+
+${categoryContext ? `[현재 설정된 업무 카테고리]
+${categoryContext}
+` : ''}
+${clinicDepartments ? `[진료 분야]
+${clinicDepartments}
+` : ''}
+[참고 매뉴얼]
+${manualsContext || '(참고할 매뉴얼이 없습니다)'}
+
+지시사항:
+- 위 매뉴얼들을 참고하여 정확하게 답변하세요
+- 매뉴얼에 없는 내용은 추측하지 말고 솔직히 알려주세요
+- 답변의 근거가 되는 매뉴얼이 있다면 반드시 참조를 명시하세요 (예: "매뉴얼 X에 따르면...")
+- 병원 업무에 맞는 전문적이고 명확한 문체를 사용하세요
+- 사용자가 "카테고리" 또는 "파트"에 대해 물으면 위 카테고리 목록을 안내하세요
+- 사용자가 매뉴얼 작성을 요청하면 위 카테고리 중 적절한 것을 선택하여 구조화된 매뉴얼을 작성하세요
+- 마크다운 형식으로 응답하세요`;
+}
+
 // 매뉴얼 구조화 프롬프트
 export function getStructurePrompt(rawContent: string): string {
   return `다음 매뉴얼 내용을 분석하고 구조화된 형태로 재구성해주세요.

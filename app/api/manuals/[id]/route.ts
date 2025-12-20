@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { createManualEmbedding, deleteManualEmbedding } from '@/lib/ai/embeddings';
+import { reindexManual, deleteManualChunks } from '@/lib/ai/chunk-indexer';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -131,10 +132,12 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       },
     });
 
-    // 임베딩 업데이트 (백그라운드)
+    // 임베딩 및 청킹 업데이트 (백그라운드)
     if (title !== existing.title || content !== existing.content) {
-      createManualEmbedding(manual.id, manual.title, manual.content, manual.summary)
-        .catch(err => console.error('임베딩 업데이트 실패:', err));
+      Promise.all([
+        createManualEmbedding(manual.id, manual.title, manual.content, manual.summary),
+        reindexManual(manual.id),
+      ]).catch(err => console.error('임베딩/청킹 업데이트 실패:', err));
     }
 
     return NextResponse.json(manual);
@@ -165,8 +168,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // 임베딩 삭제
-    await deleteManualEmbedding(manualId);
+    // 임베딩 및 청크 삭제
+    await Promise.all([
+      deleteManualEmbedding(manualId),
+      deleteManualChunks(manualId),
+    ]);
 
     // 매뉴얼 삭제 (관련 버전, 첨부파일도 CASCADE로 삭제됨)
     await prisma.manuals.delete({

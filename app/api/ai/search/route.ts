@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateJSON } from '@/lib/ai/gemini';
-import { getSearchQAPrompt } from '@/lib/ai/prompts';
-import { searchManualsForQA } from '@/lib/ai/vector-search';
+import { executeRAGPipeline, quickRAGSearch, premiumRAGSearch } from '@/lib/ai/rag-pipeline';
 import { getNoResultSuggestionPrompt, clinicInfo } from '@/lib/clinic-info';
+import { recordUserFeedback } from '@/lib/ai/metrics';
 import type { SearchResult } from '@/lib/ai/types';
 
-// POST /api/ai/search - 시맨틱 검색 + Q&A
+// POST /api/ai/search - 시맨틱 검색 + Q&A (RAG 파이프라인)
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { query, limit = 5 } = body;
+    const { query, limit = 5, mode = 'standard' } = body;
 
     if (!query) {
       return NextResponse.json(
@@ -18,11 +18,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. 관련 매뉴얼 검색
-    const relevantManuals = await searchManualsForQA(query, limit);
+    // RAG 파이프라인 실행 (모드에 따라 선택)
+    let ragResult;
+    switch (mode) {
+      case 'quick':
+        ragResult = await quickRAGSearch(query);
+        break;
+      case 'premium':
+        ragResult = await premiumRAGSearch(query);
+        break;
+      default:
+        ragResult = await executeRAGPipeline(query, {
+          hybridSearchLimit: limit * 3,
+          rerankTopK: limit,
+          enableCache: true,
+          enableRerank: true,
+          enableMetrics: true,
+        });
+    }
 
-    if (relevantManuals.length === 0) {
-      // AI 제안 생성
+    // 검색 결과 없음 처리
+    if (ragResult.chunks.length === 0) {
       try {
         const suggestionPrompt = getNoResultSuggestionPrompt(query);
         const suggestion = await generateJSON<{
@@ -44,57 +60,45 @@ export async function POST(request: NextRequest) {
             clinicWebsite: clinicInfo.website,
           },
           noManualFound: true,
+          queryId: ragResult.queryId,
+          metrics: ragResult.metrics,
         });
       } catch {
-        // AI 제안 실패 시 기본 응답
         return NextResponse.json({
           answer: `관련된 매뉴얼을 찾을 수 없습니다.\n\n**이지동안의원 문의**\n- 전화: ${clinicInfo.phone}\n- 홈페이지: ${clinicInfo.website}`,
           sources: [],
           confidence: 0,
           followUpQuestions: ['진료시간', '시그니처 시술', '예약 방법'],
           noManualFound: true,
+          queryId: ragResult.queryId,
         });
       }
     }
 
-    // 2. AI에게 Q&A 요청
-    const prompt = getSearchQAPrompt(
-      query,
-      relevantManuals.map(m => ({
-        id: m.id,
-        title: m.title,
-        content: m.content,
-        summary: m.summary,
-        categoryName: m.categoryName,
-      }))
-    );
-
-    const aiResult = await generateJSON<{
-      answer: string;
-      sources: {
-        manualId: number;
-        title: string;
-        relevance: string;
-      }[];
-      confidence: number;
-      followUpQuestions: string[];
-    }>(prompt);
-
-    // 3. 결과 조합
-    const result: SearchResult = {
-      answer: aiResult.answer,
-      sources: aiResult.sources.map(s => {
-        const manual = relevantManuals.find(m => m.id === s.manualId);
+    // RAG 결과를 기존 API 형식으로 변환
+    const result: SearchResult & {
+      queryId: string;
+      reasoning?: object;
+      metrics?: object;
+      limitations?: string;
+    } = {
+      answer: ragResult.response.answer,
+      sources: ragResult.response.sources.map(s => {
+        const chunk = ragResult.chunks.find(c => c.manualId === s.manualId);
         return {
           manualId: s.manualId,
           title: s.title,
-          categoryName: manual?.categoryName || null,
+          categoryName: null,
           relevance: s.relevance,
-          excerpt: manual?.content.slice(0, 200) + '...' || '',
+          excerpt: chunk?.content.slice(0, 200) + '...' || '',
         };
       }),
-      confidence: aiResult.confidence,
-      followUpQuestions: aiResult.followUpQuestions,
+      confidence: ragResult.response.confidence,
+      followUpQuestions: ragResult.response.followUpQuestions,
+      queryId: ragResult.queryId,
+      reasoning: ragResult.response.reasoning,
+      limitations: ragResult.response.limitations,
+      metrics: ragResult.metrics,
     };
 
     return NextResponse.json(result);
@@ -102,6 +106,38 @@ export async function POST(request: NextRequest) {
     console.error('검색 실패:', error);
     return NextResponse.json(
       { error: '검색에 실패했습니다.' },
+      { status: 500 }
+    );
+  }
+}
+
+// PUT /api/ai/search - 검색 피드백 제출
+export async function PUT(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { queryId, feedback } = body;
+
+    if (!queryId || !feedback) {
+      return NextResponse.json(
+        { error: 'queryId와 feedback이 필요합니다.' },
+        { status: 400 }
+      );
+    }
+
+    if (!['helpful', 'not_helpful'].includes(feedback)) {
+      return NextResponse.json(
+        { error: 'feedback은 helpful 또는 not_helpful이어야 합니다.' },
+        { status: 400 }
+      );
+    }
+
+    await recordUserFeedback(queryId, feedback);
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('피드백 저장 실패:', error);
+    return NextResponse.json(
+      { error: '피드백 저장에 실패했습니다.' },
       { status: 500 }
     );
   }
@@ -121,19 +157,35 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // 관련 매뉴얼 검색
-    const results = await searchManualsForQA(query, limit);
+    // Hybrid 검색 사용 (RAG 파이프라인의 간소화 버전)
+    const ragResult = await quickRAGSearch(query);
+
+    // 결과를 간단한 형식으로 변환
+    const uniqueManuals = new Map<number, {
+      id: number;
+      title: string;
+      summary: string | null;
+      categoryName: string | null;
+      combinedScore: number;
+      excerpt: string;
+    }>();
+
+    for (const chunk of ragResult.chunks.slice(0, limit)) {
+      if (!uniqueManuals.has(chunk.manualId)) {
+        uniqueManuals.set(chunk.manualId, {
+          id: chunk.manualId,
+          title: chunk.manualTitle,
+          summary: null,
+          categoryName: null,
+          combinedScore: chunk.combinedScore,
+          excerpt: chunk.content.slice(0, 200) + '...',
+        });
+      }
+    }
 
     return NextResponse.json({
       query,
-      results: results.map(m => ({
-        id: m.id,
-        title: m.title,
-        summary: m.summary,
-        categoryName: m.categoryName,
-        similarity: m.similarity,
-        excerpt: m.content.slice(0, 200) + '...',
-      })),
+      results: Array.from(uniqueManuals.values()),
     });
   } catch (error) {
     console.error('검색 실패:', error);

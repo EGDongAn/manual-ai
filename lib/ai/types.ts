@@ -87,3 +87,81 @@ export interface EmbeddingData {
   embedding: number[];
   contentHash: string;
 }
+
+// pgvector 관련 타입
+
+export interface PgVectorSearchResult {
+  id: number;
+  manual_id: number;
+  similarity: number;
+  title: string;
+  content: string;
+  summary: string | null;
+  category_id: number | null;
+  status: string;
+}
+
+export interface ChunkSearchResult {
+  id: number;
+  manual_id: number;
+  chunk_index: number;
+  content: string;
+  similarity: number;
+  title: string;
+  manual_summary: string | null;
+  category_id: number | null;
+}
+
+export interface HybridSearchResult {
+  manuals: PgVectorSearchResult[];
+  chunks: ChunkSearchResult[];
+}
+
+// Hybrid 검색에서 반환되는 개별 청크 결과 (RRF 통합 점수 포함)
+export interface HybridChunkResult {
+  chunkId: number;
+  manualId: number;
+  content: string;
+  manualTitle: string;
+  sectionTitle: string | null;
+  chunkIndex: number;
+  vectorScore: number;
+  keywordScore: number;
+  combinedScore: number;
+}
+
+export interface VectorStats {
+  totalEmbeddings: number;
+  embeddingsWithVector: number;
+  totalChunks: number;
+}
+
+export interface MigrationResult {
+  total: number;
+  indexed: number;
+  totalChunks?: number;
+  errors: string[];
+}
+
+export interface SearchOptions {
+  manualLimit?: number;
+  chunkLimit?: number;
+  threshold?: number;
+  useChunks?: boolean;
+  categoryId?: number;
+}
+
+export interface ChunkingOptions {
+  useChunks?: boolean;
+  chunkSize?: number;
+  overlap?: number;
+}
+
+export interface ManualChunk {
+  id: number;
+  manual_id: number;
+  chunk_index: number;
+  content: string;
+  token_count: number | null;
+  created_at: Date;
+}

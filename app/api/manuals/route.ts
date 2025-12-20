@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { createManualEmbedding } from '@/lib/ai/embeddings';
+import { indexManualChunks } from '@/lib/ai/chunk-indexer';
 
 // GET /api/manuals - 매뉴얼 목록 조회
 export async function GET(request: NextRequest) {
@@ -120,9 +121,11 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // 임베딩 생성 (백그라운드)
-    createManualEmbedding(manual.id, manual.title, manual.content, manual.summary)
-      .catch(err => console.error('임베딩 생성 실패:', err));
+    // 임베딩 및 청킹 인덱싱 생성 (백그라운드)
+    Promise.all([
+      createManualEmbedding(manual.id, manual.title, manual.content, manual.summary),
+      indexManualChunks(manual.id, manual.title, manual.content),
+    ]).catch(err => console.error('임베딩/청킹 생성 실패:', err));
 
     return NextResponse.json(manual, { status: 201 });
   } catch (error) {
