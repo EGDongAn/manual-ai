@@ -9,6 +9,7 @@ import { Menu, X } from 'lucide-react'
 const navItems = [
   { href: '/', label: '대시보드' },
   { href: '/manuals', label: '매뉴얼' },
+  { href: '/manuals/upload', label: '업로드' },
   { href: '/categories', label: '카테고리' },
   { href: '/ai/chat', label: 'AI 채팅' },
   { href: '/ai/search', label: 'AI 검색' },

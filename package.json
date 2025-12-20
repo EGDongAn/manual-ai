@@ -22,9 +22,12 @@
     "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
     "lucide-react": "^0.562.0",
+    "mammoth": "^1.11.0",
     "next": "16.1.0",
+    "pdf-parse": "^2.4.5",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-markdown": "^10.1.0",
     "tailwind-merge": "^3.4.0",
     "uuid": "^13.0.0"
   },

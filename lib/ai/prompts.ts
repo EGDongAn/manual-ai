@@ -387,3 +387,195 @@ ${content}
 
 요약만 응답하세요. 다른 설명은 필요 없습니다.`;
 }
+
+// 대화형 매뉴얼 작성 가이드 프롬프트
+export interface ManualCreationContext {
+  topic: string;
+  collectedInfo: {
+    purpose?: string;
+    targetAudience?: string;
+    procedures?: string[];
+    warnings?: string[];
+    examples?: string[];
+    relatedManuals?: string[];
+    additionalNotes?: string;
+  };
+  currentStep: number;
+  categories?: Category[];
+}
+
+export function getManualCreationGuidePrompt(context: ManualCreationContext): string {
+  const { topic, collectedInfo, currentStep, categories } = context;
+
+  const categoryList = categories
+    ? categories.map(c => {
+        const parent = c.parentName ? ` (상위: ${c.parentName})` : '';
+        return `- ${c.name}${parent}`;
+      }).join('\n')
+    : '';
+
+  const collectedSummary = Object.entries(collectedInfo)
+    .filter(([, value]) => value && (Array.isArray(value) ? value.length > 0 : true))
+    .map(([key, value]) => {
+      const keyNames: Record<string, string> = {
+        purpose: '목적',
+        targetAudience: '대상',
+        procedures: '절차',
+        warnings: '주의사항',
+        examples: '예시',
+        relatedManuals: '연관 매뉴얼',
+        additionalNotes: '추가 정보'
+      };
+      const displayValue = Array.isArray(value) ? value.join(', ') : value;
+      return `- ${keyNames[key] || key}: ${displayValue}`;
+    })
+    .join('\n');
+
+  return `당신은 병원 업무 매뉴얼 작성을 도와주는 AI 어시스턴트입니다.
+
+**현재 작성 중인 매뉴얼 주제:** ${topic}
+**진행 단계:** ${currentStep}/5
+
+${collectedSummary ? `**지금까지 수집된 정보:**
+${collectedSummary}
+` : ''}
+${categoryList ? `**사용 가능한 카테고리:**
+${categoryList}
+` : ''}
+**대화형 매뉴얼 작성 가이드:**
+
+당신의 역할은 사용자와 대화하면서 매뉴얼 작성에 필요한 정보를 단계별로 수집하는 것입니다.
+
+**정보 수집 순서:**
+1. **목적 파악** (현재 단계: ${currentStep === 1 ? '진행 중' : currentStep > 1 ? '완료' : '대기'}): 이 매뉴얼이 왜 필요한지, 어떤 문제를 해결하는지
+2. **대상 확인** (현재 단계: ${currentStep === 2 ? '진행 중' : currentStep > 2 ? '완료' : '대기'}): 누가 이 매뉴얼을 사용하는지 (신입, 전 직원, 특정 부서 등)
+3. **절차 정리** (현재 단계: ${currentStep === 3 ? '진행 중' : currentStep > 3 ? '완료' : '대기'}): 구체적인 업무 절차나 단계
+4. **주의사항** (현재 단계: ${currentStep === 4 ? '진행 중' : currentStep > 4 ? '완료' : '대기'}): 주의할 점, 자주 하는 실수, 예외 상황
+5. **추가 정보** (현재 단계: ${currentStep === 5 ? '진행 중' : '대기'}): 예시, 관련 문서, 참고 사항
+
+**응답 규칙:**
+- 한 번에 하나의 질문만 하세요
+- 사용자의 답변을 바탕으로 자연스럽게 다음 질문으로 이어가세요
+- 충분한 정보가 수집되면 다음 단계로 넘어가세요
+- 사용자가 "다음" 또는 "넘어가자"라고 하면 다음 단계로 진행하세요
+- 모든 단계가 완료되면 초안 작성 준비가 되었음을 알리세요
+
+**응답 형식:**
+마크다운으로 친근하고 전문적인 어조로 응답하세요.
+현재 단계와 관련된 질문을 하고, 필요시 예시를 들어 설명하세요.`;
+}
+
+// 수집된 정보로 매뉴얼 초안 생성 프롬프트
+export function getManualDraftPrompt(context: ManualCreationContext): string {
+  const { topic, collectedInfo, categories } = context;
+
+  const categoryList = categories
+    ? categories.map(c => {
+        const parent = c.parentName ? ` (상위: ${c.parentName})` : '';
+        return `- ID: ${c.id}, ${c.name}${parent}`;
+      }).join('\n')
+    : '';
+
+  return `당신은 병원 업무 매뉴얼 작성 전문가입니다.
+
+다음 정보를 바탕으로 구조화된 매뉴얼 초안을 작성해주세요.
+
+**주제:** ${topic}
+
+**수집된 정보:**
+- 목적: ${collectedInfo.purpose || '(미정)'}
+- 대상: ${collectedInfo.targetAudience || '전 직원'}
+- 절차: ${collectedInfo.procedures?.join('\n  ') || '(미정)'}
+- 주의사항: ${collectedInfo.warnings?.join('\n  ') || '(없음)'}
+- 예시: ${collectedInfo.examples?.join('\n  ') || '(없음)'}
+- 연관 매뉴얼: ${collectedInfo.relatedManuals?.join(', ') || '(없음)'}
+- 추가 정보: ${collectedInfo.additionalNotes || '(없음)'}
+
+${categoryList ? `**카테고리 목록:**
+${categoryList}
+` : ''}
+
+**매뉴얼 작성 요구사항:**
+1. 명확하고 전문적인 제목
+2. 목적 및 적용 범위
+3. 대상자 명시
+4. 단계별 절차 (번호 매기기)
+5. 주의사항 및 참고사항
+6. 필요시 예시 포함
+
+**응답 형식 (JSON):**
+{
+  "title": "매뉴얼 제목",
+  "suggestedCategoryId": 카테고리ID숫자 또는 null,
+  "suggestedCategoryName": "카테고리명",
+  "summary": "2-3문장의 요약",
+  "content": "마크다운 형식의 전체 매뉴얼 내용",
+  "tags": ["태그1", "태그2"]
+}`;
+}
+
+// 검색 결과 없음 응답 프롬프트 (매뉴얼 작성 제안 포함)
+export function getNoResultsResponsePrompt(question: string): string {
+  return `사용자가 "${question}"에 대해 질문했지만, 관련 매뉴얼을 찾을 수 없습니다.
+
+**응답 요구사항:**
+1. 해당 내용의 매뉴얼이 없다는 것을 알림
+2. 사용자에게 새 매뉴얼 작성을 제안
+3. 친근하고 도움이 되는 어조 유지
+
+**응답 형식:**
+마크다운으로 응답하되, 마지막에 매뉴얼 작성 제안을 포함하세요.
+예: "이 내용에 대한 매뉴얼을 새로 작성해 드릴까요? '네' 또는 '작성해줘'라고 답변해 주시면 대화형으로 매뉴얼 작성을 도와드리겠습니다."`;
+}
+
+// 업로드 콘텐츠 분석 프롬프트
+export function getUploadAnalysisPrompt(
+  content: string,
+  filename: string | undefined,
+  categories: Category[]
+): string {
+  const categoryList = categories
+    .map(c => {
+      const parent = c.parentName ? ` (상위: ${c.parentName})` : '';
+      return `- ID: ${c.id}, 이름: ${c.name}${parent}${c.description ? ` - ${c.description}` : ''}`;
+    })
+    .join('\n');
+
+  return `당신은 병원 업무 매뉴얼 분석 전문가입니다.
+
+다음 업로드된 문서를 분석하여 매뉴얼로 정리해주세요.
+
+${filename ? `**파일명:** ${filename}` : ''}
+
+**문서 내용:**
+${content.slice(0, 5000)}
+${content.length > 5000 ? '\n...(이하 생략)' : ''}
+
+**기존 카테고리 목록:**
+${categoryList || '(카테고리가 없습니다)'}
+
+**분석 및 정리 요구사항:**
+1. 적절한 제목 추출 또는 생성
+2. 2-3문장의 요약문 작성
+3. 내용을 구조화된 마크다운으로 재정리 (제목, 목적, 절차, 주의사항 등)
+4. 가장 적합한 카테고리 3개 추천 (기존 카테고리 중에서)
+5. 관련 태그 5개 이내 추천
+6. 문서 품질 점수 (0-100)
+7. 개선이 필요한 부분 제안
+
+**응답 형식 (JSON):**
+{
+  "title": "추출/생성된 제목",
+  "summary": "2-3문장 요약",
+  "structuredContent": "마크다운으로 구조화된 전체 내용",
+  "categoryRecommendations": [
+    {"categoryId": 1, "name": "카테고리명", "score": 95, "reason": "추천 이유"},
+    {"categoryId": 2, "name": "카테고리명", "score": 80, "reason": "추천 이유"}
+  ],
+  "tags": ["태그1", "태그2", "태그3"],
+  "qualityScore": 75,
+  "suggestions": ["개선 제안 1", "개선 제안 2"]
+}
+
+JSON만 응답하세요. 다른 텍스트는 포함하지 마세요.`;
+}

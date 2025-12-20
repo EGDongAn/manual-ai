@@ -1,16 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getModel } from '@/lib/ai/gemini';
-import { getGroundedChatSystemPrompt, getWritingAssistPrompt } from '@/lib/ai/prompts';
+import {
+  getGroundedChatSystemPrompt,
+  getWritingAssistPrompt,
+  getManualCreationGuidePrompt,
+  getManualDraftPrompt,
+  getNoResultsResponsePrompt,
+  type ManualCreationContext,
+} from '@/lib/ai/prompts';
 import { hybridSearch } from '@/lib/ai/hybrid-search';
 import { clinicInfo } from '@/lib/clinic-info';
 import type { ChatMessage } from '@/lib/ai/types';
+
+// 모드 타입 정의
+type ChatMode = 'qa' | 'writing' | 'creating' | 'generating';
 
 // POST /api/ai/chat - AI 채팅 (스트리밍)
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { message, sessionId, mode, manualContext } = body;
+    const {
+      message,
+      sessionId,
+      mode = 'qa',
+      manualContext,
+      creationContext,
+    }: {
+      message: string;
+      sessionId?: number;
+      mode?: ChatMode;
+      manualContext?: { title: string | null; content: string | null };
+      creationContext?: ManualCreationContext;
+    } = body;
 
     if (!message) {
       return NextResponse.json(
@@ -56,9 +78,13 @@ export async function POST(request: NextRequest) {
       summary: string | null;
       categoryName: string | null;
     }[] = [];
+    let noResults = false;
 
     if (mode === 'writing' && manualContext) {
       // 매뉴얼 작성 모드: 컨텍스트 사용
+      relevantManuals = [];
+    } else if (mode === 'creating' || mode === 'generating') {
+      // 매뉴얼 생성 모드: 검색하지 않음
       relevantManuals = [];
     } else {
       // Q&A 모드: Hybrid 검색 (벡터 + 키워드)
@@ -91,23 +117,51 @@ export async function POST(request: NextRequest) {
         }
 
         relevantManuals = Array.from(manualMap.values()).slice(0, 5);
+
+        // 검색 결과가 없으면 noResults 플래그 설정
+        noResults = relevantManuals.length === 0;
       } catch (searchError) {
         console.error('Hybrid 검색 실패, 기본 검색으로 폴백:', searchError);
         // 검색 실패 시 빈 배열 사용
         relevantManuals = [];
+        noResults = true;
       }
     }
 
-    // 시스템 프롬프트 생성 (할루시네이션 방지 강화)
+    // 카테고리 데이터 매핑
+    const mappedCategories = categories.map(c => ({
+      id: c.id,
+      name: c.name,
+      description: c.description,
+      parentName: c.parent?.name || null,
+    }));
+
+    // 시스템 프롬프트 생성 (모드별 분기)
     let systemPrompt: string;
     if (mode === 'writing') {
+      // 기존 매뉴얼 수정 모드
       systemPrompt = getWritingAssistPrompt(
         manualContext?.title || null,
         manualContext?.content || null,
         message
       );
+    } else if (mode === 'creating' && creationContext) {
+      // 대화형 매뉴얼 작성 모드 (정보 수집)
+      systemPrompt = getManualCreationGuidePrompt({
+        ...creationContext,
+        categories: mappedCategories,
+      });
+    } else if (mode === 'generating' && creationContext) {
+      // 매뉴얼 초안 생성 모드
+      systemPrompt = getManualDraftPrompt({
+        ...creationContext,
+        categories: mappedCategories,
+      });
+    } else if (noResults) {
+      // 검색 결과 없음 - 매뉴얼 작성 제안
+      systemPrompt = getNoResultsResponsePrompt(message);
     } else {
-      // Grounded 프롬프트 사용 (할루시네이션 방지 강화)
+      // Q&A 모드: Grounded 프롬프트 사용 (할루시네이션 방지 강화)
       systemPrompt = getGroundedChatSystemPrompt(
         relevantManuals.map(m => ({
           id: m.id,
@@ -116,12 +170,7 @@ export async function POST(request: NextRequest) {
           summary: m.summary,
           categoryName: m.categoryName,
         })),
-        categories.map(c => ({
-          id: c.id,
-          name: c.name,
-          description: c.description,
-          parentName: c.parent?.name || null,
-        })),
+        mappedCategories,
         {
           name: clinicInfo.name,
           departments: clinicInfo.departments,
@@ -194,12 +243,14 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          // 완료 신호
+          // 완료 신호 (noResults, mode 포함)
           controller.enqueue(
             encoder.encode(
               `data: ${JSON.stringify({
                 done: true,
                 sessionId: session.id,
+                noResults,
+                mode,
                 sources: relevantManuals.map(m => ({
                   id: m.id,
                   title: m.title,
